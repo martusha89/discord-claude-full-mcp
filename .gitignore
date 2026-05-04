@@ -1,0 +1,7 @@
+node_modules/
+build/
+.env
+config.json
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,36 @@
+{
+  "name": "discord-claude-full-mcp",
+  "version": "0.1.0",
+  "description": "A full-featured Discord MCP server: text, images, files, voice notes (ElevenLabs TTS), stickers, server emojis, reactions, and more.",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "discord-claude-full-mcp": "build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc -w"
+  },
+  "keywords": [
+    "discord",
+    "mcp",
+    "claude",
+    "elevenlabs",
+    "voice-note",
+    "model-context-protocol"
+  ],
+  "author": "Marta Varen",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.2.0",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.7",
+    "ffmpeg-static": "^5.2.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "typescript": "^5.3.3"
+  }
+}
