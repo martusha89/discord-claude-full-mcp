@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import express from "express";
 
 import { loadConfig, isElevenLabsReady, RuntimeConfig } from "./config.js";
 import { createClient } from "./discord/client.js";
@@ -15,6 +17,7 @@ import {
   deleteMessage,
   reactToMessage,
   setTyping,
+  sendDirectMessage,
 } from "./discord/messages.js";
 import { sendImage, sendFile } from "./discord/attachments.js";
 import { listEmojis, resolveEmojiPlaceholders } from "./discord/emojis.js";
@@ -200,6 +203,18 @@ const baseTools = [
       },
     },
   },
+  {
+    name: "send_direct_message",
+    description: "Send a direct message (DM) to a Discord user by their user ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        userId: { type: "string", description: "Discord user ID (numeric)" },
+        message: { type: "string", description: "Message content" },
+      },
+      required: ["userId", "message"],
+    },
+  },
 ];
 
 const voiceTool = {
@@ -221,7 +236,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: elevenReady ? [...baseTools, voiceTool] : baseTools,
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
+// Extract tool handler so it can be reused by per-session servers (Streamable HTTP mode)
+const toolHandler = async (req: any) => {
   const { name, arguments: args = {} } = req.params;
   const a = args as any;
 
@@ -300,13 +316,23 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         });
         return ok(`Voice note sent (id: ${r.id}, ${r.durationSecs.toFixed(1)}s)`);
       }
+      case "send_direct_message": {
+        const r = await sendDirectMessage({
+          userId: a.userId,
+          content: a.message,
+        });
+        return ok(`DM sent to ${r.recipient} (id: ${r.id})`);
+      }
       default:
         return err(`Unknown tool: ${name}`);
     }
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
   }
-});
+};
+
+// Register on the global server (used in stdio mode)
+server.setRequestHandler(CallToolRequestSchema, toolHandler);
 
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
@@ -322,9 +348,90 @@ client.once("ready", () => {
 
 async function main() {
   await client.login(cfg.discordToken);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("[mcp] discord-claude-full-mcp running on stdio");
+
+  const mode = process.env.MCP_TRANSPORT || "stdio";
+
+  if (mode === "sse" || mode === "http") {
+    const port = parseInt(process.env.MCP_PORT || "3001", 10);
+    const app = express();
+    app.use(express.json());
+
+    // CORS for claude.ai cross-origin requests
+    app.use((_req, res, next) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id");
+      res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+      if (_req.method === "OPTIONS") {
+        res.status(204).end();
+        return;
+      }
+      next();
+    });
+
+    // Helper: create a fresh MCP server with all tools registered
+    function createMcpServer(): Server {
+      const s = new Server(
+        { name: "discord-claude-full-mcp", version: "0.1.0" },
+        { capabilities: { tools: {} } }
+      );
+      s.setRequestHandler(ListToolsRequestSchema, async () => ({
+        tools: elevenReady ? [...baseTools, voiceTool] : baseTools,
+      }));
+      s.setRequestHandler(CallToolRequestSchema, toolHandler);
+      return s;
+    }
+
+    // Stateless mode: new transport + server per request
+    app.post("/mcp", async (req, res) => {
+      try {
+        const mcpServer = createMcpServer();
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        res.on("close", () => {
+          transport.close();
+          mcpServer.close();
+        });
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+      } catch (e) {
+        console.error("[mcp] Error handling request:", e);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal server error" },
+            id: null,
+          });
+        }
+      }
+    });
+
+    app.get("/mcp", (_req, res) => {
+      res.writeHead(405).end("Method Not Allowed — use POST");
+    });
+
+    app.delete("/mcp", (_req, res) => {
+      res.writeHead(405).end("Method Not Allowed");
+    });
+
+    app.get("/health", (_req, res) => {
+      res.json({
+        status: "ok",
+        discord: client.user?.tag || "not logged in",
+        elevenlabs: elevenReady ? "ready" : "disabled",
+      });
+    });
+
+    app.listen(port, () => {
+      console.error(`[mcp] discord-claude-full-mcp running on Streamable HTTP — http://localhost:${port}/mcp`);
+      console.error(`[mcp] health check: http://localhost:${port}/health`);
+    });
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("[mcp] discord-claude-full-mcp running on stdio");
+  }
 }
 
 main().catch((e) => {
