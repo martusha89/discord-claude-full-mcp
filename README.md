@@ -7,6 +7,7 @@ A full-featured Discord MCP server for Claude (and any MCP-compatible client). S
 ## Features
 
 - `send_message` — text, with `:emoji_name:` shortcuts that resolve to your server's custom emojis, and optional reply-to
+- `send_direct_message` — send a DM to any Discord user by user ID
 - `read_messages` — full message metadata (attachments, embeds, stickers, reactions, replies)
 - `edit_message`, `delete_message`, `react_to_message`, `set_typing`
 - `send_image`, `send_file` — local path or URL
@@ -106,6 +107,37 @@ claude mcp add discord node C:\\path\\to\\discord-claude-full-mcp\\build\\index.
 ## Use from any MCP client
 
 It's stdio-transport — point any MCP-compatible host at `node build/index.js`.
+
+## Use with claude.ai (browser & mobile app)
+
+The server supports **Streamable HTTP transport** for use directly in claude.ai — both browser and the Claude mobile app.
+
+1. Set transport mode in `.env`:
+
+```
+MCP_TRANSPORT=sse
+MCP_PORT=3001
+```
+
+2. Run the server:
+
+```bash
+npm run build && node build/index.js
+```
+
+3. Expose it publicly (e.g. via ngrok):
+
+```bash
+ngrok http 3001
+```
+
+ngrok will display a public URL like `https://abc123.ngrok-free.dev` — copy it.
+
+4. Add to claude.ai: **Settings → Connectors → Add custom connector**
+   - URL: your ngrok URL + `/mcp` → e.g. `https://abc123.ngrok-free.dev/mcp`
+   - **Important:** don't forget the `/mcp` at the end!
+
+The server runs in stateless mode — each request gets its own server instance. A health check is available at `/health`.
 
 ## How voice notes work
 
