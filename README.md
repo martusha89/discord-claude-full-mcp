@@ -1,4 +1,12 @@
-# discord-claude-full-mcp
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:8B5CF6,100:22D3EE&height=170&section=header&text=discord-claude-full-mcp&fontColor=ffffff&fontSize=28&fontAlignY=40&desc=A%20full-featured%20Discord%20MCP%20server%20for%20Claude&descSize=17&descAlignY=64" width="100%" />
+
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](#)
+[![MCP](https://img.shields.io/badge/MCP-server-8B5CF6?style=for-the-badge)](https://modelcontextprotocol.io)
+[![license MIT](https://img.shields.io/badge/license-MIT-A855F7?style=for-the-badge)](LICENSE)
+
+</div>
 
 A full-featured Discord MCP server for Claude (and any MCP-compatible client). Send and read messages, post images and files, drop server stickers, react with custom server emojis, set the bot's presence — and optionally send **real Discord voice notes** synthesised on the fly with ElevenLabs.
 
