@@ -68,11 +68,24 @@ export function loadConfig(): RuntimeConfig {
   const file = loadConfigFile();
   const merged: ElevenLabsConfig = { ...DEFAULTS, ...(file.elevenlabs ?? {}) };
 
+  // Installed from npm, the package lives inside node_modules and there is
+  // nowhere sensible to drop a config.json, so env vars must be able to carry
+  // everything a user actually needs to set. They win over the file.
+  const envVoiceId = process.env.ELEVENLABS_VOICE_ID?.trim();
+  if (envVoiceId) merged.voiceId = envVoiceId;
+
+  const envModelId = process.env.ELEVENLABS_MODEL_ID?.trim();
+  if (envModelId) merged.modelId = envModelId;
+
+  const defaults = { ...(file.defaults ?? {}) };
+  const envGuildId = process.env.DISCORD_DEFAULT_GUILD_ID?.trim();
+  if (envGuildId) defaults.guildId = envGuildId;
+
   return {
     discordToken: token,
     elevenLabsApiKey: process.env.ELEVENLABS_API_KEY?.trim() || null,
     elevenlabs: merged,
-    defaults: file.defaults ?? {},
+    defaults,
   };
 }
 

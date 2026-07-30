@@ -39,8 +39,16 @@ You'll also need the **Message Content** privileged intent enabled in the develo
 
 ## Install
 
+From npm (no clone needed, your MCP host runs it via `npx`):
+
 ```bash
-git clone <your-fork>
+npx -y discord-claude-full-mcp
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/martusha89/discord-claude-full-mcp.git
 cd discord-claude-full-mcp
 npm install
 npm run build
@@ -82,9 +90,37 @@ Edit `config.json` only if you want voice notes or default-server behaviour:
 
 `defaults.guildId` is what the server uses if a tool call omits the `server` argument and the bot is in more than one server.
 
+### Configuring without a config file
+
+If you installed from npm there is nowhere sensible to put a `config.json`, so every setting that matters is also readable from the environment. Env vars win over the file:
+
+| Variable | Purpose |
+| --- | --- |
+| `DISCORD_TOKEN` | **Required.** Bot token. |
+| `ELEVENLABS_API_KEY` | Enables `send_voice_note`. |
+| `ELEVENLABS_VOICE_ID` | Voice used for voice notes. Required alongside the key. |
+| `ELEVENLABS_MODEL_ID` | Defaults to `eleven_turbo_v2_5`. |
+| `DISCORD_DEFAULT_GUILD_ID` | Server assumed when a tool call omits `server`. |
+
 ## Use with Claude Desktop
 
 Add to `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "discord": {
+      "command": "npx",
+      "args": ["-y", "discord-claude-full-mcp"],
+      "env": {
+        "DISCORD_TOKEN": "your_discord_bot_token_here"
+      }
+    }
+  }
+}
+```
+
+Running from a local clone instead:
 
 ```json
 {
@@ -100,7 +136,7 @@ Add to `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_c
 ## Use with Claude Code
 
 ```bash
-claude mcp add discord node C:\\path\\to\\discord-claude-full-mcp\\build\\index.js
+claude mcp add discord --env DISCORD_TOKEN=your_token_here -- npx -y discord-claude-full-mcp
 ```
 
 ## Use from any MCP client

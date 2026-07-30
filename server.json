@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.martusha89/discord-claude-full-mcp",
+  "title": "Discord (Full)",
+  "description": "Discord MCP server: messages, images, files, stickers, emoji reactions, and TTS voice notes.",
+  "repository": {
+    "url": "https://github.com/martusha89/discord-claude-full-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "discord-claude-full-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "DISCORD_TOKEN",
+          "description": "Discord bot token from the Discord Developer Portal",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "ELEVENLABS_API_KEY",
+          "description": "ElevenLabs API key. Only needed for the send_voice_note tool",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "ELEVENLABS_VOICE_ID",
+          "description": "ElevenLabs voice id used for voice notes. Required alongside the API key",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "ELEVENLABS_MODEL_ID",
+          "description": "ElevenLabs model id. Defaults to eleven_turbo_v2_5",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_DEFAULT_GUILD_ID",
+          "description": "Server assumed when a tool call omits the server argument",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

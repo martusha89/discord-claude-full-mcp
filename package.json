@@ -1,16 +1,38 @@
 {
   "name": "discord-claude-full-mcp",
   "version": "0.1.0",
+  "mcpName": "io.github.martusha89/discord-claude-full-mcp",
   "description": "A full-featured Discord MCP server: text, images, files, voice notes (ElevenLabs TTS), stickers, server emojis, reactions, and more.",
   "type": "module",
   "main": "build/index.js",
   "bin": {
     "discord-claude-full-mcp": "build/index.js"
   },
+  "files": [
+    "build",
+    "src",
+    "tsconfig.json",
+    "config.example.json",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/martusha89/discord-claude-full-mcp.git"
+  },
+  "homepage": "https://github.com/martusha89/discord-claude-full-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/martusha89/discord-claude-full-mcp/issues"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "dev": "tsc -w"
+    "dev": "tsc -w",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "discord",

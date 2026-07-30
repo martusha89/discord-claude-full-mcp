@@ -47,19 +47,33 @@ export async function readMessages(opts: {
   const channel = await findChannel(opts.channel, opts.server, opts.fallbackGuildId);
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
   const fetched = await channel.messages.fetch({ limit });
-  return Array.from(fetched.values()).map(formatMessage);
+  return Array.from(fetched.values()).map((msg) => {
+    try {
+      return formatMessage(msg);
+    } catch (err) {
+      // One malformed message (null author, system/webhook entry, odd embed)
+      // must not take down the whole scroll-back. Degrade to a minimal stub.
+      return {
+        id: (msg as Message)?.id ?? null,
+        content: (msg as Message)?.content ?? "",
+        formatError: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
 }
 
 export function formatMessage(msg: Message) {
   return {
     id: msg.id,
-    author: { id: msg.author.id, tag: msg.author.tag, bot: msg.author.bot },
-    content: msg.content,
+    author: msg.author
+      ? { id: msg.author.id, tag: msg.author.tag, bot: msg.author.bot }
+      : null,
+    content: msg.content ?? "",
     timestamp: msg.createdAt.toISOString(),
     editedAt: msg.editedAt?.toISOString() ?? null,
     attachments: msg.attachments.map((a) => ({
       id: a.id,
-      name: a.name,
+      name: a.name ?? null,
       url: a.url,
       contentType: a.contentType,
       size: a.size,
@@ -68,12 +82,12 @@ export function formatMessage(msg: Message) {
       waveform: a.waveform ?? null,
     })),
     embeds: msg.embeds.map((e) => ({
-      title: e.title,
-      description: e.description,
-      url: e.url,
-      type: e.data.type,
+      title: e.title ?? null,
+      description: e.description ?? null,
+      url: e.url ?? null,
+      type: e.data?.type ?? null,
     })),
-    stickers: msg.stickers.map((s) => ({ id: s.id, name: s.name })),
+    stickers: msg.stickers.map((s) => ({ id: s.id, name: s.name ?? null })),
     reactions: msg.reactions.cache.map((r) => ({
       emoji: r.emoji.toString(),
       count: r.count,
