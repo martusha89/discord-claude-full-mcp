@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 import { loadConfig, isElevenLabsReady, RuntimeConfig } from "./config.js";
 import { createClient } from "./discord/client.js";
@@ -347,23 +348,70 @@ client.once("ready", () => {
 });
 
 async function main() {
+  const mode = process.env.MCP_TRANSPORT || "stdio";
+  const port = parseInt(process.env.MCP_PORT || "3001", 10);
+  const host = process.env.MCP_HOST || "127.0.0.1";
+  const authToken = process.env.MCP_AUTH_TOKEN || "";
+  const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || "https://claude.ai,https://claude.com")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  // The HTTP endpoint gives full control of the Discord bot. Refuse to
+  // expose it beyond loopback unless an auth token is configured.
+  // Validated before Discord login so a misconfigured server never connects.
+  const loopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+  if ((mode === "sse" || mode === "http") && !loopback && !authToken) {
+    console.error(
+      `[mcp] Refusing to bind MCP_HOST=${host} without MCP_AUTH_TOKEN. ` +
+        "Set MCP_AUTH_TOKEN to a long random secret, or bind to 127.0.0.1."
+    );
+    process.exit(1);
+  }
+
   await client.login(cfg.discordToken);
 
-  const mode = process.env.MCP_TRANSPORT || "stdio";
-
   if (mode === "sse" || mode === "http") {
-    const port = parseInt(process.env.MCP_PORT || "3001", 10);
+    if (loopback && !authToken) {
+      console.error("[mcp] Warning: no MCP_AUTH_TOKEN set. Any local process can drive the bot via this port.");
+    }
+
     const app = express();
     app.use(express.json());
 
-    // CORS for claude.ai cross-origin requests
-    app.use((_req, res, next) => {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id");
-      res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
-      if (_req.method === "OPTIONS") {
+    // CORS restricted to explicitly allowed origins (MCP_ALLOWED_ORIGINS)
+    app.use((req, res, next) => {
+      const origin = req.headers.origin;
+      if (origin && allowedOrigins.includes(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Vary", "Origin");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id");
+        res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+      }
+      if (req.method === "OPTIONS") {
         res.status(204).end();
+        return;
+      }
+      next();
+    });
+
+    // Bearer auth on /mcp when a token is configured (timing-safe compare)
+    app.use("/mcp", (req, res, next) => {
+      if (!authToken) {
+        next();
+        return;
+      }
+      const header = req.headers.authorization || "";
+      const presented = header.startsWith("Bearer ") ? header.slice(7) : "";
+      const a = createHash("sha256").update(presented).digest();
+      const b = createHash("sha256").update(authToken).digest();
+      if (!presented || !timingSafeEqual(a, b)) {
+        res.status(401).json({
+          jsonrpc: "2.0",
+          error: { code: -32001, message: "Unauthorized" },
+          id: null,
+        });
         return;
       }
       next();
@@ -423,9 +471,10 @@ async function main() {
       });
     });
 
-    app.listen(port, () => {
-      console.error(`[mcp] discord-claude-full-mcp running on Streamable HTTP — http://localhost:${port}/mcp`);
-      console.error(`[mcp] health check: http://localhost:${port}/health`);
+    app.listen(port, host, () => {
+      console.error(`[mcp] discord-claude-full-mcp running on Streamable HTTP: http://${host}:${port}/mcp`);
+      console.error(`[mcp] health check: http://${host}:${port}/health`);
+      console.error(`[mcp] auth: ${authToken ? "bearer token required" : "none"}`);
     });
   } else {
     const transport = new StdioServerTransport();

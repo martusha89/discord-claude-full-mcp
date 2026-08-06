@@ -156,12 +156,21 @@ It's stdio-transport — point any MCP-compatible host at `node build/index.js`.
 
 The server supports **Streamable HTTP transport** for use directly in claude.ai — both browser and the Claude mobile app.
 
-1. Set transport mode in `.env`:
+1. Set transport mode and an auth token in `.env`:
 
 ```
 MCP_TRANSPORT=sse
 MCP_PORT=3001
+MCP_AUTH_TOKEN=<long random secret>
 ```
+
+Generate a token with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+The `/mcp` endpoint gives full control of your Discord bot, so anything that exposes it beyond your own machine **must** be protected. The server binds to `127.0.0.1` by default and refuses to bind other addresses (`MCP_HOST`) without `MCP_AUTH_TOKEN` set. When a token is set, every request needs an `Authorization: Bearer <token>` header.
 
 2. Run the server:
 
@@ -175,13 +184,14 @@ npm run build && node build/index.js
 ngrok http 3001
 ```
 
-ngrok will display a public URL like `https://abc123.ngrok-free.dev` — copy it.
+ngrok will display a public URL like `https://abc123.ngrok-free.dev`. Copy it.
 
 4. Add to claude.ai: **Settings → Connectors → Add custom connector**
-   - URL: your ngrok URL + `/mcp` → e.g. `https://abc123.ngrok-free.dev/mcp`
+   - URL: your ngrok URL + `/mcp`, e.g. `https://abc123.ngrok-free.dev/mcp`
    - **Important:** don't forget the `/mcp` at the end!
+   - If your MCP client can send custom headers, configure `Authorization: Bearer <your token>` there. If it can't, keep the tunnel URL secret and rotate it often; the token is the real lock.
 
-The server runs in stateless mode — each request gets its own server instance. A health check is available at `/health`.
+The server runs in stateless mode: each request gets its own server instance. A health check is available at `/health`. Cross-origin requests are only allowed from `https://claude.ai` and `https://claude.com` by default (override with `MCP_ALLOWED_ORIGINS`).
 
 ## How voice notes work
 
