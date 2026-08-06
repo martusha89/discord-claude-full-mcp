@@ -1,4 +1,12 @@
-# discord-claude-full-mcp
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:8B5CF6,100:22D3EE&height=170&section=header&text=discord-claude-full-mcp&fontColor=ffffff&fontSize=28&fontAlignY=40&desc=A%20full-featured%20Discord%20MCP%20server%20for%20Claude&descSize=17&descAlignY=64" width="100%" />
+
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](#)
+[![MCP](https://img.shields.io/badge/MCP-server-8B5CF6?style=for-the-badge)](https://modelcontextprotocol.io)
+[![license MIT](https://img.shields.io/badge/license-MIT-A855F7?style=for-the-badge)](LICENSE)
+
+</div>
 
 A full-featured Discord MCP server for Claude (and any MCP-compatible client). Send and read messages, post images and files, drop server stickers, react with custom server emojis, set the bot's presence — and optionally send **real Discord voice notes** synthesised on the fly with ElevenLabs.
 
@@ -7,6 +15,7 @@ A full-featured Discord MCP server for Claude (and any MCP-compatible client). S
 ## Features
 
 - `send_message` — text, with `:emoji_name:` shortcuts that resolve to your server's custom emojis, and optional reply-to
+- `send_direct_message` — send a DM to any Discord user by user ID
 - `read_messages` — full message metadata (attachments, embeds, stickers, reactions, replies)
 - `edit_message`, `delete_message`, `react_to_message`, `set_typing`
 - `send_image`, `send_file` — local path or URL
@@ -142,6 +151,37 @@ claude mcp add discord --env DISCORD_TOKEN=your_token_here -- npx -y discord-cla
 ## Use from any MCP client
 
 It's stdio-transport — point any MCP-compatible host at `node build/index.js`.
+
+## Use with claude.ai (browser & mobile app)
+
+The server supports **Streamable HTTP transport** for use directly in claude.ai — both browser and the Claude mobile app.
+
+1. Set transport mode in `.env`:
+
+```
+MCP_TRANSPORT=sse
+MCP_PORT=3001
+```
+
+2. Run the server:
+
+```bash
+npm run build && node build/index.js
+```
+
+3. Expose it publicly (e.g. via ngrok):
+
+```bash
+ngrok http 3001
+```
+
+ngrok will display a public URL like `https://abc123.ngrok-free.dev` — copy it.
+
+4. Add to claude.ai: **Settings → Connectors → Add custom connector**
+   - URL: your ngrok URL + `/mcp` → e.g. `https://abc123.ngrok-free.dev/mcp`
+   - **Important:** don't forget the `/mcp` at the end!
+
+The server runs in stateless mode — each request gets its own server instance. A health check is available at `/health`.
 
 ## How voice notes work
 

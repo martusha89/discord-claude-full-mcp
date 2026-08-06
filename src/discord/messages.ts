@@ -1,5 +1,5 @@
 import { Message, MessageCreateOptions } from "discord.js";
-import { findChannel, SendableChannel } from "./client.js";
+import { findChannel, SendableChannel, getClient } from "./client.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -145,4 +145,17 @@ export async function setTyping(opts: {
     await channel.sendTyping();
   }
   return { ok: true };
+}
+
+export async function sendDirectMessage(opts: {
+  userId: string;
+  content: string;
+}) {
+  const client = getClient();
+  const user = await client.users.fetch(opts.userId);
+  if (!user) throw new Error(`User with ID ${opts.userId} not found`);
+  const dmChannel = await user.createDM();
+  await typingBeat(dmChannel, opts.content);
+  const sent = await dmChannel.send({ content: opts.content });
+  return { id: sent.id, channelId: dmChannel.id, recipient: user.tag };
 }
