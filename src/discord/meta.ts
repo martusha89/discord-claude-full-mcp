@@ -1,10 +1,14 @@
 import { ChannelType, ActivityType, PresenceStatusData } from "discord.js";
 import { getClient, findGuild } from "./client.js";
+import {
+  publicChannelReference,
+  publicServerReference,
+} from "../privacy.js";
 
 export async function listServers() {
   const client = getClient();
   return Array.from(client.guilds.cache.values()).map((g) => ({
-    id: g.id,
+    id: publicServerReference(g.id),
     name: g.name,
     memberCount: g.memberCount,
   }));
@@ -14,7 +18,7 @@ export async function listChannels(opts: { server?: string; fallbackGuildId?: st
   const guild = await findGuild(opts.server, opts.fallbackGuildId);
   await guild.channels.fetch();
   return guild.channels.cache.map((c) => ({
-    id: c.id,
+    id: publicChannelReference(c.id),
     name: c.name,
     type: ChannelType[c.type],
   }));

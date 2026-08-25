@@ -30,6 +30,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "test": "npm run build && node --test test/privacy.test.mjs test/security.test.mjs",
     "start": "node build/index.js",
     "dev": "tsc -w",
     "prepublishOnly": "npm run build"

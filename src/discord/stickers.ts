@@ -25,6 +25,7 @@ export async function sendSticker(opts: {
   }
   const sent = await channel.send({
     content: opts.content,
+    allowedMentions: { parse: [], repliedUser: false },
     stickers: [opts.stickerId],
   });
   return { id: sent.id };

@@ -51,6 +51,62 @@
           "isRequired": false,
           "isSecret": false,
           "format": "string"
+        },
+        {
+          "name": "DISCORD_PRIVACY_MODE",
+          "description": "Message privacy mode: redacted (default), metadata, or full",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_PRIVACY_ALIAS_KEY",
+          "description": "Optional secret that keeps privacy aliases stable across Discord token rotation",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_INCLUDE_IMAGES",
+          "description": "Include Discord image pixels in read_messages; defaults to true",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_MAX_IMAGE_CONTEXT_BYTES",
+          "description": "Combined technical image byte ceiling per read_messages call",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_MAX_IMAGE_PIXELS",
+          "description": "Maximum decoded pixels per image during safe validation",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_IMAGE_READ_TIMEOUT_MS",
+          "description": "Overall image processing deadline per read_messages call",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_ALLOWED_FILE_ROOTS",
+          "description": "Comma-separated local directories permitted for file attachments",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DISCORD_MAX_ATTACHMENT_BYTES",
+          "description": "Configurable technical ceiling for local and remote attachment bytes",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
         }
       ]
     }

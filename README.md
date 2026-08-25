@@ -15,10 +15,10 @@ A full-featured Discord MCP server for Claude (and any MCP-compatible client). S
 ## Features
 
 - `send_message` — text, with `:emoji_name:` shortcuts that resolve to your server's custom emojis, and optional reply-to
-- `send_direct_message` — send a DM to any Discord user by user ID
-- `read_messages` — full message metadata (attachments, embeds, stickers, reactions, replies)
+- `send_direct_message` — send a DM using a locally resolved privacy alias or an owner-supplied user ID
+- `read_messages` — privacy-redacted text plus actual image content, stable aliases and reply context
 - `edit_message`, `delete_message`, `react_to_message`, `set_typing`
-- `send_image`, `send_file` — local path or URL
+- `send_image`, `send_file` — approved local roots or public HTTPS URLs
 - `send_sticker` — server stickers by ID
 - `list_servers`, `list_channels`, `list_emojis`, `list_stickers`
 - `set_status` — online/idle/dnd/invisible plus activity text
@@ -99,6 +99,38 @@ Edit `config.json` only if you want voice notes or default-server behaviour:
 
 `defaults.guildId` is what the server uses if a tool call omits the `server` argument and the bot is in more than one server.
 
+### Privacy modes
+
+`read_messages` defaults to `DISCORD_PRIVACY_MODE=redacted`. The model receives message text **and the actual pixels of supported image attachments**, plus stable local aliases such as `User-A1B2C3D4E5F6`, timestamps and reply relationships. It does not receive Discord user IDs/tags, raw message IDs, signed attachment URLs or embed bodies. Discord mentions inside message text are converted to aliases. The bridge keeps alias mappings in memory so DMs, replies, edits, reactions and deletion still work without revealing the underlying IDs to the model.
+
+- `metadata` — aliases and structural metadata only; message text and image pixels are omitted
+- `redacted` — conversational text and image pixels with private identifiers and URLs removed (default)
+- `full` — original full-fidelity Discord data plus image pixels, explicitly selected by the owner
+
+Alias labels remain stable across restarts, but the private reverse-routing maps are deliberately memory-only: after a restart, read the relevant message again before using an old alias for a DM, reply, edit, reaction or deletion. Set `DISCORD_PRIVACY_ALIAS_KEY` if the labels themselves must also survive a Discord-token rotation.
+
+Local attachments are disabled until `DISCORD_ALLOWED_FILE_ROOTS` contains one or more approved directories. Remote attachments require public HTTPS, block private/reserved network addresses and have a configurable memory ceiling (`DISCORD_MAX_ATTACHMENT_BYTES`, default 25 MiB).
+
+#### Reduced provider data by default
+
+Redaction happens inside this local MCP process **before** a `read_messages` result is returned to Claude or another model provider. In the default `redacted` mode:
+
+| Discord data | Sent to the model provider? |
+| --- | --- |
+| Message text | Yes — the remote model needs this to understand the conversation |
+| Stable local user aliases | Yes |
+| Image pixels from supported attachments | Yes — embedded directly as MCP image content |
+| Discord usernames, tags and user IDs | No |
+| Raw Discord message IDs | No — local message aliases preserve replies and edits |
+| User, role and channel IDs inside Discord mentions | No — converted to aliases or generic labels |
+| Attachment names, types and sizes | Yes |
+| Attachment URLs, waveform data and signed CDN links | No |
+| Embed bodies and URLs | No |
+
+Supported PNG, JPEG, GIF and WebP uploads, embed images/thumbnails and raster Discord stickers are downloaded locally, checked by an actual bounded FFmpeg decode rather than trusting their MIME label, stripped of their source URL, and embedded in the MCP response. Their pixels therefore reach the configured model provider so the AI can genuinely inspect them. Lottie/JSON stickers, AVIF/HEIC and other provider-dependent formats are reported but not emitted as misleading “supported” image blocks. Set `DISCORD_INCLUDE_IMAGES=false` to opt out, or use `metadata` mode to omit both text and images. The combined image payload and decoded pixel count have configurable technical ceilings.
+
+Server and channel names are still returned when their discovery tools are explicitly called because the model needs them for navigation. Their raw IDs become reversible local aliases such as `Server-...` and `Channel-...`, so duplicate names remain usable without exposing the underlying IDs; `full` mode returns the originals. Voice-note text is sent to ElevenLabs only when `send_voice_note` is invoked. Use `full` only when the owner deliberately wants the original Discord payload.
+
 ### Configuring without a config file
 
 If you installed from npm there is nowhere sensible to put a `config.json`, so every setting that matters is also readable from the environment. Env vars win over the file:
@@ -110,6 +142,14 @@ If you installed from npm there is nowhere sensible to put a `config.json`, so e
 | `ELEVENLABS_VOICE_ID` | Voice used for voice notes. Required alongside the key. |
 | `ELEVENLABS_MODEL_ID` | Defaults to `eleven_turbo_v2_5`. |
 | `DISCORD_DEFAULT_GUILD_ID` | Server assumed when a tool call omits `server`. |
+| `DISCORD_PRIVACY_MODE` | `redacted` (default), `metadata`, or `full`. |
+| `DISCORD_PRIVACY_ALIAS_KEY` | Optional secret for aliases that survive bot-token rotation. |
+| `DISCORD_INCLUDE_IMAGES` | Include image pixels in `read_messages`; defaults to `true`. |
+| `DISCORD_MAX_IMAGE_CONTEXT_BYTES` | Combined technical image ceiling per read; default 25 MiB. |
+| `DISCORD_MAX_IMAGE_PIXELS` | Safe decode ceiling per image; default 40 megapixels. |
+| `DISCORD_IMAGE_READ_TIMEOUT_MS` | Overall image processing deadline per read; default 30 seconds. |
+| `DISCORD_ALLOWED_FILE_ROOTS` | Comma-separated directories permitted for local attachments. |
+| `DISCORD_MAX_ATTACHMENT_BYTES` | Technical attachment memory ceiling; default 25 MiB. |
 
 ## Use with Claude Desktop
 
@@ -170,7 +210,7 @@ Generate a token with:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-The `/mcp` endpoint gives full control of your Discord bot, so anything that exposes it beyond your own machine **must** be protected. The server binds to `127.0.0.1` by default and refuses to bind other addresses (`MCP_HOST`) without `MCP_AUTH_TOKEN` set. When a token is set, every request needs an `Authorization: Bearer <token>` header.
+The `/mcp` endpoint gives full control of your Discord bot. HTTP mode therefore refuses to start without an `MCP_AUTH_TOKEN` of at least 32 characters, even on loopback: tunnels and reverse proxies can expose a loopback listener. Every `/mcp` and `/health` request needs an `Authorization: Bearer <token>` header. Browser `OPTIONS` preflight is the sole unauthenticated exception; it performs no MCP action and returns no operational data. Authentication runs before JSON body parsing. Use TLS or a trusted TLS-terminating tunnel because bearer authentication does not encrypt plaintext HTTP.
 
 2. Run the server:
 
@@ -189,9 +229,13 @@ ngrok will display a public URL like `https://abc123.ngrok-free.dev`. Copy it.
 4. Add to claude.ai: **Settings → Connectors → Add custom connector**
    - URL: your ngrok URL + `/mcp`, e.g. `https://abc123.ngrok-free.dev/mcp`
    - **Important:** don't forget the `/mcp` at the end!
-   - If your MCP client can send custom headers, configure `Authorization: Bearer <your token>` there. If it can't, keep the tunnel URL secret and rotate it often; the token is the real lock.
+   - Configure `Authorization: Bearer <your token>`. If the client cannot send authentication headers, do not expose this endpoint with a public tunnel.
 
-The server runs in stateless mode: each request gets its own server instance. A health check is available at `/health`. Cross-origin requests are only allowed from `https://claude.ai` and `https://claude.com` by default (override with `MCP_ALLOWED_ORIGINS`).
+The server runs in stateless mode: each request gets its own server instance. An authenticated, metadata-free health check is available at `/health`. Cross-origin requests are only allowed from `https://claude.ai` and `https://claude.com` by default (override with `MCP_ALLOWED_ORIGINS`).
+
+### Privacy boundary
+
+Redaction happens locally before a tool result is returned. Message text and included image pixels become model context and may be processed by the configured model provider; private Discord identifiers and signed CDN URLs do not need to accompany them. A remote model cannot reason about content that is cryptographically hidden from it, so use `metadata` mode or disable images when that content must not leave the machine. Voice-note text is additionally sent to ElevenLabs before Discord.
 
 ## How voice notes work
 

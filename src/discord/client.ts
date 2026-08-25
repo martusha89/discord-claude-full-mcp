@@ -7,8 +7,11 @@ import {
   DMChannel,
   NewsChannel,
   Guild,
-  ChannelType,
 } from "discord.js";
+import {
+  resolveChannelReference,
+  resolveServerReference,
+} from "../privacy.js";
 
 export type SendableChannel = TextChannel | ThreadChannel | DMChannel | NewsChannel;
 
@@ -40,16 +43,12 @@ export async function findGuild(
   fallbackId?: string
 ): Promise<Guild> {
   const client = getClient();
-  const target = identifier ?? fallbackId;
+  const rawTarget = identifier ?? fallbackId;
+  const target = rawTarget ? resolveServerReference(rawTarget) : undefined;
 
   if (!target) {
     if (client.guilds.cache.size === 1) return client.guilds.cache.first()!;
-    const list = Array.from(client.guilds.cache.values())
-      .map((g) => `"${g.name}"`)
-      .join(", ");
-    throw new Error(
-      `Multiple servers — pass server name or ID. Available: ${list}`
-    );
+    throw new Error("Multiple servers — pass a server name or ID.");
   }
 
   try {
@@ -64,14 +63,10 @@ export async function findGuild(
   );
   if (matches.size === 1) return matches.first()!;
   if (matches.size > 1) {
-    const list = matches.map((g) => `${g.name} (${g.id})`).join(", ");
-    throw new Error(`Multiple servers named "${target}": ${list}`);
+    throw new Error(`Multiple servers are named "${target}". Pass its ID.`);
   }
 
-  const all = Array.from(client.guilds.cache.values())
-    .map((g) => `"${g.name}"`)
-    .join(", ");
-  throw new Error(`Server "${target}" not found. Available: ${all}`);
+  throw new Error(`Server "${target}" not found.`);
 }
 
 export function isSendable(c: unknown): c is SendableChannel {
@@ -89,17 +84,35 @@ export async function findChannel(
   fallbackGuildId?: string
 ): Promise<SendableChannel> {
   const client = getClient();
+  const resolvedChannelIdentifier = resolveChannelReference(channelIdentifier);
+  const requestedGuild = guildIdentifier ?? fallbackGuildId;
+  const expectedGuild = requestedGuild
+    ? await findGuild(guildIdentifier, fallbackGuildId)
+    : null;
 
   // Try direct channel ID fetch first
   try {
-    const c = await client.channels.fetch(channelIdentifier);
-    if (isSendable(c)) return c;
-  } catch {
+    const c = await client.channels.fetch(resolvedChannelIdentifier);
+    if (isSendable(c)) {
+      if (expectedGuild) {
+        if (!("guildId" in c) || c.guildId !== expectedGuild.id) {
+          throw new Error("Channel does not belong to the requested server.");
+        }
+      }
+      return c;
+    }
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message === "Channel does not belong to the requested server."
+    ) {
+      throw err;
+    }
     // fall through
   }
 
-  const guild = await findGuild(guildIdentifier, fallbackGuildId);
-  const stripped = channelIdentifier.replace(/^#/, "").toLowerCase();
+  const guild = expectedGuild ?? (await findGuild(guildIdentifier, fallbackGuildId));
+  const stripped = resolvedChannelIdentifier.replace(/^#/, "").toLowerCase();
   const matches: SendableChannel[] = [];
   for (const c of guild.channels.cache.values()) {
     if (
@@ -113,17 +126,10 @@ export async function findChannel(
 
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
-    const list = matches.map((c) => `#${("name" in c ? c.name : "?")} (${c.id})`).join(", ");
     throw new Error(
-      `Multiple channels named "${channelIdentifier}" in ${guild.name}: ${list}`
+      `Multiple channels are named "${channelIdentifier}". Pass the channel ID.`
     );
   }
 
-  const available = guild.channels.cache
-    .filter((c) => c.type === ChannelType.GuildText)
-    .map((c) => `"#${c.name}"`)
-    .join(", ");
-  throw new Error(
-    `Channel "${channelIdentifier}" not found in ${guild.name}. Available: ${available}`
-  );
+  throw new Error(`Channel "${channelIdentifier}" not found in ${guild.name}.`);
 }

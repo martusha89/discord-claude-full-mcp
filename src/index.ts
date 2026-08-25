@@ -7,7 +7,6 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
-import { createHash, timingSafeEqual } from "node:crypto";
 
 import { loadConfig, isElevenLabsReady, RuntimeConfig } from "./config.js";
 import { createClient } from "./discord/client.js";
@@ -19,14 +18,27 @@ import {
   reactToMessage,
   setTyping,
   sendDirectMessage,
+  buildReadMessagesMcpContent,
 } from "./discord/messages.js";
 import { sendImage, sendFile } from "./discord/attachments.js";
 import { listEmojis, resolveEmojiPlaceholders } from "./discord/emojis.js";
 import { listStickers, sendSticker } from "./discord/stickers.js";
 import { listServers, listChannels, setStatus } from "./discord/meta.js";
 import { sendVoiceNote } from "./discord/voice.js";
+import {
+  configurePrivacy,
+  publicMessageReference,
+  redactDiscordContent,
+} from "./privacy.js";
+import {
+  bearerTokenMatches,
+  httpAuthConfigurationError,
+  isHttpMode,
+  originAllowed,
+} from "./http-security.js";
 
 const cfg: RuntimeConfig = loadConfig();
+configurePrivacy(cfg.privacy);
 const fallbackGuildId = cfg.defaults.guildId || undefined;
 const elevenReady = isElevenLabsReady(cfg);
 
@@ -48,14 +60,18 @@ const baseTools = [
         server: { type: "string", description: "Server name or ID (optional if bot is in one server or default is configured)" },
         channel: { type: "string", description: "Channel name (e.g. 'general') or channel ID" },
         message: { type: "string", description: "Message content" },
-        replyToMessageId: { type: "string", description: "Optional message ID to reply to" },
+        replyToMessageId: {
+          type: "string",
+          description: "Optional privacy message alias returned by a tool, or owner-supplied Discord message ID",
+        },
       },
       required: ["channel", "message"],
     },
   },
   {
     name: "read_messages",
-    description: "Read recent messages from a channel. Includes attachments, embeds, stickers, reactions, and reply references.",
+    description:
+      "Read recent Discord messages and supported image pixels as untrusted external content. The default preserves text, vision content, aliases and reply context while removing Discord IDs, tags, signed attachment URLs and embed bodies.",
     inputSchema: {
       type: "object",
       properties: {
@@ -74,7 +90,7 @@ const baseTools = [
       properties: {
         server: { type: "string" },
         channel: { type: "string" },
-        messageId: { type: "string" },
+        messageId: { type: "string", description: "Privacy message alias or Discord message ID" },
         content: { type: "string" },
       },
       required: ["channel", "messageId", "content"],
@@ -88,7 +104,7 @@ const baseTools = [
       properties: {
         server: { type: "string" },
         channel: { type: "string" },
-        messageId: { type: "string" },
+        messageId: { type: "string", description: "Privacy message alias or Discord message ID" },
       },
       required: ["channel", "messageId"],
     },
@@ -101,7 +117,7 @@ const baseTools = [
       properties: {
         server: { type: "string" },
         channel: { type: "string" },
-        messageId: { type: "string" },
+        messageId: { type: "string", description: "Privacy message alias or Discord message ID" },
         emoji: { type: "string" },
       },
       required: ["channel", "messageId", "emoji"],
@@ -118,7 +134,8 @@ const baseTools = [
   },
   {
     name: "send_image",
-    description: "Send an image (path or URL) with an optional caption.",
+    description:
+      "Send an image from a public HTTPS URL or an owner-approved local file root, with an optional caption.",
     inputSchema: {
       type: "object",
       properties: {
@@ -133,7 +150,8 @@ const baseTools = [
   },
   {
     name: "send_file",
-    description: "Send any file (path or URL) as an attachment.",
+    description:
+      "Send a file from a public HTTPS URL or an owner-approved local file root.",
     inputSchema: {
       type: "object",
       properties: {
@@ -206,14 +224,23 @@ const baseTools = [
   },
   {
     name: "send_direct_message",
-    description: "Send a direct message (DM) to a Discord user by their user ID.",
+    description:
+      "Send a direct message using a local privacy alias returned by read_messages, or a numeric Discord user ID supplied by the owner.",
     inputSchema: {
       type: "object",
       properties: {
-        userId: { type: "string", description: "Discord user ID (numeric)" },
+        recipient: {
+          type: "string",
+          description: "Privacy alias (for example User-A1B2C3D4E5F6) or numeric Discord user ID",
+        },
+        userId: {
+          type: "string",
+          description: "Deprecated numeric Discord user ID; use recipient instead",
+        },
         message: { type: "string", description: "Message content" },
       },
-      required: ["userId", "message"],
+      required: ["message"],
+      anyOf: [{ required: ["recipient"] }, { required: ["userId"] }],
     },
   },
 ];
@@ -253,20 +280,27 @@ const toolHandler = async (req: any) => {
           replyToMessageId: a.replyToMessageId,
           fallbackGuildId,
         });
-        return ok(`Sent (id: ${r.id}) to #${r.channelName}`);
+        return ok(`Sent (id: ${publicMessageReference(r.id)}) to #${r.channelName}`);
       }
       case "read_messages": {
-        const msgs = await readMessages({
+        const result = await readMessages({
           server: a.server,
           channel: a.channel,
           limit: a.limit,
           fallbackGuildId,
+          attachmentPolicy: cfg.attachments,
+          includeImages: cfg.privacy.includeImages,
+          maxImageContextBytes: cfg.privacy.maxImageContextBytes,
+          maxImagePixels: cfg.privacy.maxImagePixels,
+          imageReadTimeoutMs: cfg.privacy.imageReadTimeoutMs,
         });
-        return ok(JSON.stringify(msgs, null, 2));
+        return {
+          content: buildReadMessagesMcpContent(result),
+        };
       }
       case "edit_message": {
         const r = await editMessage({ ...a, fallbackGuildId });
-        return ok(`Edited ${r.id}`);
+        return ok(`Edited ${publicMessageReference(r.id)}`);
       }
       case "delete_message": {
         await deleteMessage({ ...a, fallbackGuildId });
@@ -283,12 +317,16 @@ const toolHandler = async (req: any) => {
       case "send_image":
       case "send_file": {
         const fn = name === "send_image" ? sendImage : sendFile;
-        const r = await fn({ ...a, fallbackGuildId });
-        return ok(`Sent (id: ${r.id})`);
+        const r = await fn({
+          ...a,
+          fallbackGuildId,
+          attachmentPolicy: cfg.attachments,
+        });
+        return ok(`Sent (id: ${publicMessageReference(r.id)})`);
       }
       case "send_sticker": {
         const r = await sendSticker({ ...a, fallbackGuildId });
-        return ok(`Sent sticker (id: ${r.id})`);
+        return ok(`Sent sticker (id: ${publicMessageReference(r.id)})`);
       }
       case "list_servers":
         return ok(JSON.stringify(await listServers(), null, 2));
@@ -315,20 +353,26 @@ const toolHandler = async (req: any) => {
           text: a.text,
           fallbackGuildId,
         });
-        return ok(`Voice note sent (id: ${r.id}, ${r.durationSecs.toFixed(1)}s)`);
+        const id = r.id ? publicMessageReference(String(r.id)) : "unknown";
+        return ok(`Voice note sent (id: ${id}, ${r.durationSecs.toFixed(1)}s)`);
       }
       case "send_direct_message": {
         const r = await sendDirectMessage({
-          userId: a.userId,
+          recipient: a.recipient ?? a.userId,
           content: a.message,
         });
-        return ok(`DM sent to ${r.recipient} (id: ${r.id})`);
+        return ok(
+          `DM sent to ${r.recipient} (id: ${publicMessageReference(r.id)})`
+        );
       }
       default:
         return err(`Unknown tool: ${name}`);
     }
   } catch (e) {
-    return err(e instanceof Error ? e.message : String(e));
+    const message = e instanceof Error ? e.message : String(e);
+    return err(
+      cfg.privacy.mode === "full" ? message : redactDiscordContent(message)
+    );
   }
 };
 
@@ -345,6 +389,7 @@ function err(text: string) {
 client.once("ready", () => {
   console.error(`[discord] logged in as ${client.user?.tag}`);
   console.error(`[elevenlabs] ${elevenReady ? "ready" : "disabled (no API key or voiceId)"}`);
+  console.error(`[privacy] ${cfg.privacy.mode}`);
 });
 
 async function main() {
@@ -357,32 +402,36 @@ async function main() {
     .map((o) => o.trim())
     .filter(Boolean);
 
-  // The HTTP endpoint gives full control of the Discord bot. Refuse to
-  // expose it beyond loopback unless an auth token is configured.
-  // Validated before Discord login so a misconfigured server never connects.
+  // HTTP gives full control of the bot. Loopback is not an authentication
+  // boundary because tunnels and reverse proxies can expose it externally.
+  // Validate before Discord login so a misconfigured server never connects.
   const loopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
-  if ((mode === "sse" || mode === "http") && !loopback && !authToken) {
-    console.error(
-      `[mcp] Refusing to bind MCP_HOST=${host} without MCP_AUTH_TOKEN. ` +
-        "Set MCP_AUTH_TOKEN to a long random secret, or bind to 127.0.0.1."
-    );
+  const authConfigurationError = httpAuthConfigurationError(mode, authToken);
+  if (authConfigurationError) {
+    console.error(`[mcp] ${authConfigurationError}`);
     process.exit(1);
   }
 
   await client.login(cfg.discordToken);
 
-  if (mode === "sse" || mode === "http") {
-    if (loopback && !authToken) {
-      console.error("[mcp] Warning: no MCP_AUTH_TOKEN set. Any local process can drive the bot via this port.");
+  if (isHttpMode(mode)) {
+    if (!loopback) {
+      console.error(
+        "[mcp] Warning: bearer authentication does not encrypt HTTP. Use TLS or a trusted TLS-terminating tunnel."
+      );
     }
 
     const app = express();
-    app.use(express.json());
 
-    // CORS restricted to explicitly allowed origins (MCP_ALLOWED_ORIGINS)
+    // CORS is checked before authentication so browser preflight can complete;
+    // OPTIONS performs no MCP action and exposes no operational data.
     app.use((req, res, next) => {
       const origin = req.headers.origin;
-      if (origin && allowedOrigins.includes(origin)) {
+      if (!originAllowed(origin, allowedOrigins)) {
+        res.status(403).json({ error: "Origin not allowed" });
+        return;
+      }
+      if (origin) {
         res.setHeader("Access-Control-Allow-Origin", origin);
         res.setHeader("Vary", "Origin");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
@@ -396,17 +445,10 @@ async function main() {
       next();
     });
 
-    // Bearer auth on /mcp when a token is configured (timing-safe compare)
-    app.use("/mcp", (req, res, next) => {
-      if (!authToken) {
-        next();
-        return;
-      }
+    // Bearer auth protects both control and operational endpoints.
+    app.use(["/mcp", "/health"], (req, res, next) => {
       const header = req.headers.authorization || "";
-      const presented = header.startsWith("Bearer ") ? header.slice(7) : "";
-      const a = createHash("sha256").update(presented).digest();
-      const b = createHash("sha256").update(authToken).digest();
-      if (!presented || !timingSafeEqual(a, b)) {
+      if (!bearerTokenMatches(header, authToken)) {
         res.status(401).json({
           jsonrpc: "2.0",
           error: { code: -32001, message: "Unauthorized" },
@@ -416,6 +458,10 @@ async function main() {
       }
       next();
     });
+
+    // Parse request bodies only after authentication, avoiding unauthenticated
+    // JSON work and ensuring malformed control requests still receive 401.
+    app.use(express.json({ limit: "256kb" }));
 
     // Helper: create a fresh MCP server with all tools registered
     function createMcpServer(): Server {
@@ -464,11 +510,7 @@ async function main() {
     });
 
     app.get("/health", (_req, res) => {
-      res.json({
-        status: "ok",
-        discord: client.user?.tag || "not logged in",
-        elevenlabs: elevenReady ? "ready" : "disabled",
-      });
+      res.json({ status: "ok" });
     });
 
     app.listen(port, host, () => {
