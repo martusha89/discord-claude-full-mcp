@@ -1,25 +1,14 @@
-{
+﻿{
   "name": "discord-claude-full-mcp",
-  "version": "0.1.0",
-  "description": "A full-featured Discord MCP server: text, images, files, voice notes (ElevenLabs TTS), stickers, server emojis, reactions, and more.",
+  "version": "0.2.0",
+  "description": "A security-conscious Discord MCP server for text, attachments, stickers, reactions, DMs, and ElevenLabs voice messages.",
   "type": "module",
   "main": "build/index.js",
-  "bin": {
-    "discord-claude-full-mcp": "build/index.js"
-  },
-  "scripts": {
-    "build": "tsc",
-    "start": "node build/index.js",
-    "dev": "tsc -w"
-  },
-  "keywords": [
-    "discord",
-    "mcp",
-    "claude",
-    "elevenlabs",
-    "voice-note",
-    "model-context-protocol"
-  ],
+  "bin": { "discord-claude-full-mcp": "build/index.js" },
+  "files": ["build", "README.md", "LICENSE", "config.example.json", ".env.example"],
+  "scripts": { "build": "tsc", "start": "node build/index.js", "dev": "tsc -w", "test": "npm run build && node --test test/*.test.mjs" },
+  "engines": { "node": ">=20" },
+  "keywords": ["discord", "mcp", "claude", "elevenlabs", "voice-message", "model-context-protocol"],
   "author": "Marta Varen",
   "license": "MIT",
   "dependencies": {
@@ -28,11 +17,7 @@
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "ffmpeg-static": "^5.2.0",
-    "zod": "^3.22.4"
+    "zod": "^3.25.0"
   },
-  "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/node": "^20.11.16",
-    "typescript": "^5.3.3"
-  }
+  "devDependencies": { "@types/express": "^5.0.6", "@types/node": "^20.11.16", "typescript": "^5.3.3" }
 }

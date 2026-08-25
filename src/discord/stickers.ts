@@ -1,4 +1,4 @@
-import { findGuild, findChannel } from "./client.js";
+﻿import { findGuild, findChannel } from "./client.js";
 
 export async function listStickers(opts: { server?: string; fallbackGuildId?: string }) {
   const guild = await findGuild(opts.server, opts.fallbackGuildId);
@@ -25,6 +25,7 @@ export async function sendSticker(opts: {
   }
   const sent = await channel.send({
     content: opts.content,
+    allowedMentions: { parse: [] },
     stickers: [opts.stickerId],
   });
   return { id: sent.id };

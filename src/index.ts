@@ -1,41 +1,23 @@
-#!/usr/bin/env node
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+﻿import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
-
-import { loadConfig, isElevenLabsReady, RuntimeConfig } from "./config.js";
+import type { Server as HttpServer } from "node:http";
+import { loadConfig, isElevenLabsReady } from "./config.js";
 import { createClient } from "./discord/client.js";
-import {
-  sendMessage,
-  readMessages,
-  editMessage,
-  deleteMessage,
-  reactToMessage,
-  setTyping,
-  sendDirectMessage,
-} from "./discord/messages.js";
+import { sendMessage, readMessages, editMessage, deleteMessage, reactToMessage, setTyping, sendDirectMessage } from "./discord/messages.js";
 import { sendImage, sendFile } from "./discord/attachments.js";
 import { listEmojis, resolveEmojiPlaceholders } from "./discord/emojis.js";
 import { listStickers, sendSticker } from "./discord/stickers.js";
 import { listServers, listChannels, setStatus } from "./discord/meta.js";
 import { sendVoiceNote } from "./discord/voice.js";
+import { fixedWindowRateLimit, httpSecurity } from "./http-security.js";
 
-const cfg: RuntimeConfig = loadConfig();
-const fallbackGuildId = cfg.defaults.guildId || undefined;
+const cfg = loadConfig();
+const fallbackGuildId = cfg.defaults.guildId;
 const elevenReady = isElevenLabsReady(cfg);
-
-const client = createClient();
-
-const server = new Server(
-  { name: "discord-claude-full-mcp", version: "0.1.0" },
-  { capabilities: { tools: {} } }
-);
-
+const client = createClient(cfg.policy);
 const baseTools = [
   {
     name: "send_message",
@@ -94,7 +76,7 @@ const baseTools = [
   },
   {
     name: "react_to_message",
-    description: "Add a reaction to a message. Use a unicode emoji ('🔥') or server emoji in `<:name:id>` form.",
+    description: "Add a reaction to a message. Use a Unicode emoji or server emoji in `<:name:id>` form.",
     inputSchema: {
       type: "object",
       properties: {
@@ -232,209 +214,71 @@ const voiceTool = {
   },
 };
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: elevenReady ? [...baseTools, voiceTool] : baseTools,
-}));
 
-// Extract tool handler so it can be reused by per-session servers (Streamable HTTP mode)
-const toolHandler = async (req: any) => {
-  const { name, arguments: args = {} } = req.params;
-  const a = args as any;
+function ok(text: string) { return { content: [{ type: "text" as const, text }] }; }
+function fail(text: string) { return { content: [{ type: "text" as const, text: `Error: ${text}` }], isError: true }; }
+function publicError(error: unknown): string {
+  if (!(error instanceof Error)) return "Request failed";
+  if (error.name === "PolicyError") return error.message;
+  const safe = ["not allowed", "not found", "disabled", "limit", "exceeds", "timed out", "ambiguous", "required", "configured", "selected server"];
+  return safe.some(term => error.message.toLowerCase().includes(term)) ? error.message : "Discord operation failed";
+}
 
+const toolHandler = async (req: { params: { name: string; arguments?: Record<string, unknown> } }) => {
+  const { name, arguments: args = {} } = req.params; const a = args as Record<string, any>;
   try {
     switch (name) {
-      case "send_message": {
-        const message = await resolveEmojiPlaceholders(a.message, a.server, fallbackGuildId);
-        const r = await sendMessage({
-          server: a.server,
-          channel: a.channel,
-          content: message,
-          replyToMessageId: a.replyToMessageId,
-          fallbackGuildId,
-        });
-        return ok(`Sent (id: ${r.id}) to #${r.channelName}`);
-      }
-      case "read_messages": {
-        const msgs = await readMessages({
-          server: a.server,
-          channel: a.channel,
-          limit: a.limit,
-          fallbackGuildId,
-        });
-        return ok(JSON.stringify(msgs, null, 2));
-      }
-      case "edit_message": {
-        const r = await editMessage({ ...a, fallbackGuildId });
-        return ok(`Edited ${r.id}`);
-      }
-      case "delete_message": {
-        await deleteMessage({ ...a, fallbackGuildId });
-        return ok(`Deleted ${a.messageId}`);
-      }
-      case "react_to_message": {
-        await reactToMessage({ ...a, fallbackGuildId });
-        return ok(`Reacted with ${a.emoji}`);
-      }
-      case "set_typing": {
-        await setTyping({ ...a, fallbackGuildId });
-        return ok("Typing.");
-      }
-      case "send_image":
-      case "send_file": {
-        const fn = name === "send_image" ? sendImage : sendFile;
-        const r = await fn({ ...a, fallbackGuildId });
-        return ok(`Sent (id: ${r.id})`);
-      }
-      case "send_sticker": {
-        const r = await sendSticker({ ...a, fallbackGuildId });
-        return ok(`Sent sticker (id: ${r.id})`);
-      }
-      case "list_servers":
-        return ok(JSON.stringify(await listServers(), null, 2));
-      case "list_channels":
-        return ok(JSON.stringify(await listChannels({ ...a, fallbackGuildId }), null, 2));
-      case "list_emojis":
-        return ok(JSON.stringify(await listEmojis({ ...a, fallbackGuildId }), null, 2));
-      case "list_stickers":
-        return ok(JSON.stringify(await listStickers({ ...a, fallbackGuildId }), null, 2));
-      case "set_status":
-        await setStatus(a);
-        return ok("Status updated.");
-      case "send_voice_note": {
-        if (!elevenReady) {
-          return err(
-            "ElevenLabs is not configured. Set ELEVENLABS_API_KEY in .env and voiceId in config.json."
-          );
-        }
-        const r = await sendVoiceNote({
-          apiKey: cfg.elevenLabsApiKey!,
-          cfg: cfg.elevenlabs,
-          server: a.server,
-          channel: a.channel,
-          text: a.text,
-          fallbackGuildId,
-        });
-        return ok(`Voice note sent (id: ${r.id}, ${r.durationSecs.toFixed(1)}s)`);
-      }
-      case "send_direct_message": {
-        const r = await sendDirectMessage({
-          userId: a.userId,
-          content: a.message,
-        });
-        return ok(`DM sent to ${r.recipient} (id: ${r.id})`);
-      }
-      default:
-        return err(`Unknown tool: ${name}`);
+      case "send_message": { const content = await resolveEmojiPlaceholders(String(a.message), a.server, fallbackGuildId); const r = await sendMessage({ server: a.server, channel: a.channel, content, replyToMessageId: a.replyToMessageId, fallbackGuildId, limits: cfg.limits }); return ok(`Sent (id: ${r.id})`); }
+      case "read_messages": return ok(JSON.stringify(await readMessages({ server: a.server, channel: a.channel, limit: a.limit, fallbackGuildId }), null, 2));
+      case "edit_message": return ok(`Edited ${(await editMessage({ server: a.server, channel: a.channel, messageId: a.messageId, content: a.content, fallbackGuildId, limits: cfg.limits })).id}`);
+      case "delete_message": await deleteMessage({ server: a.server, channel: a.channel, messageId: a.messageId, fallbackGuildId }); return ok("Deleted message");
+      case "react_to_message": await reactToMessage({ server: a.server, channel: a.channel, messageId: a.messageId, emoji: a.emoji, fallbackGuildId }); return ok("Reaction added");
+      case "set_typing": await setTyping({ server: a.server, channel: a.channel, fallbackGuildId }); return ok("Typing indicator sent");
+      case "send_image": case "send_file": { const fn = name === "send_image" ? sendImage : sendFile; const r = await fn({ server: a.server, channel: a.channel, source: a.source, caption: a.caption, filename: a.filename, fallbackGuildId, policy: cfg.policy, limits: cfg.limits, remoteMode: cfg.transport === "http" }); return ok(`Sent attachment (id: ${r.id})`); }
+      case "send_sticker": return ok(`Sent sticker (id: ${(await sendSticker({ server: a.server, channel: a.channel, stickerId: a.stickerId, content: a.content, fallbackGuildId })).id})`);
+      case "list_servers": return ok(JSON.stringify(await listServers(), null, 2));
+      case "list_channels": return ok(JSON.stringify(await listChannels({ server: a.server, fallbackGuildId }), null, 2));
+      case "list_emojis": return ok(JSON.stringify(await listEmojis({ server: a.server, fallbackGuildId }), null, 2));
+      case "list_stickers": return ok(JSON.stringify(await listStickers({ server: a.server, fallbackGuildId }), null, 2));
+      case "set_status": await setStatus(a); return ok("Status updated");
+      case "send_direct_message": { const r = await sendDirectMessage({ userId: a.userId, content: a.message, limits: cfg.limits }); return ok(`DM sent (id: ${r.id})`); }
+      case "send_voice_note": { if (!elevenReady) return fail("ElevenLabs is not configured"); const r = await sendVoiceNote({ apiKey: cfg.elevenLabsApiKey!, cfg: cfg.elevenlabs, limits: cfg.limits, server: a.server, channel: a.channel, text: a.text, fallbackGuildId }); return ok(`Voice note sent (id: ${r.id}, ${r.durationSecs.toFixed(1)}s)`); }
+      default: return fail("Unknown tool");
     }
-  } catch (e) {
-    return err(e instanceof Error ? e.message : String(e));
-  }
+  } catch (error) { console.error("[tool] request failed:", error); return fail(publicError(error)); }
 };
 
-// Register on the global server (used in stdio mode)
-server.setRequestHandler(CallToolRequestSchema, toolHandler);
-
-function ok(text: string) {
-  return { content: [{ type: "text" as const, text }] };
-}
-function err(text: string) {
-  return { content: [{ type: "text" as const, text: `Error: ${text}` }], isError: true };
+function createMcpServer(): Server {
+  const server = new Server({ name: "discord-claude-full-mcp", version: "0.2.0" }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: elevenReady ? [...baseTools, voiceTool] : baseTools }));
+  server.setRequestHandler(CallToolRequestSchema, toolHandler);
+  return server;
 }
 
-client.once("ready", () => {
-  console.error(`[discord] logged in as ${client.user?.tag}`);
-  console.error(`[elevenlabs] ${elevenReady ? "ready" : "disabled (no API key or voiceId)"}`);
-});
+let httpServer: HttpServer | undefined; let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return; shuttingDown = true; console.error(`[shutdown] ${signal}`);
+  await new Promise<void>(resolve => httpServer ? httpServer.close(() => resolve()) : resolve());
+  client.destroy(); process.exitCode = 0;
+}
+process.once("SIGINT", () => void shutdown("SIGINT")); process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 async function main() {
   await client.login(cfg.discordToken);
-
-  const mode = process.env.MCP_TRANSPORT || "stdio";
-
-  if (mode === "sse" || mode === "http") {
-    const port = parseInt(process.env.MCP_PORT || "3001", 10);
-    const app = express();
-    app.use(express.json());
-
-    // CORS for claude.ai cross-origin requests
-    app.use((_req, res, next) => {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id");
-      res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
-      if (_req.method === "OPTIONS") {
-        res.status(204).end();
-        return;
-      }
-      next();
-    });
-
-    // Helper: create a fresh MCP server with all tools registered
-    function createMcpServer(): Server {
-      const s = new Server(
-        { name: "discord-claude-full-mcp", version: "0.1.0" },
-        { capabilities: { tools: {} } }
-      );
-      s.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: elevenReady ? [...baseTools, voiceTool] : baseTools,
-      }));
-      s.setRequestHandler(CallToolRequestSchema, toolHandler);
-      return s;
-    }
-
-    // Stateless mode: new transport + server per request
-    app.post("/mcp", async (req, res) => {
-      try {
-        const mcpServer = createMcpServer();
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-        });
-        res.on("close", () => {
-          transport.close();
-          mcpServer.close();
-        });
-        await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
-      } catch (e) {
-        console.error("[mcp] Error handling request:", e);
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: "2.0",
-            error: { code: -32603, message: "Internal server error" },
-            id: null,
-          });
-        }
-      }
-    });
-
-    app.get("/mcp", (_req, res) => {
-      res.writeHead(405).end("Method Not Allowed — use POST");
-    });
-
-    app.delete("/mcp", (_req, res) => {
-      res.writeHead(405).end("Method Not Allowed");
-    });
-
-    app.get("/health", (_req, res) => {
-      res.json({
-        status: "ok",
-        discord: client.user?.tag || "not logged in",
-        elevenlabs: elevenReady ? "ready" : "disabled",
-      });
-    });
-
-    app.listen(port, () => {
-      console.error(`[mcp] discord-claude-full-mcp running on Streamable HTTP — http://localhost:${port}/mcp`);
-      console.error(`[mcp] health check: http://localhost:${port}/health`);
-    });
-  } else {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error("[mcp] discord-claude-full-mcp running on stdio");
-  }
+  if (cfg.transport === "stdio") { await createMcpServer().connect(new StdioServerTransport()); console.error("[mcp] running on stdio"); return; }
+  const app = express(); app.disable("x-powered-by");
+  app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
+  app.get("/ready", (_req, res) => client.isReady() && !shuttingDown ? res.status(200).json({ status: "ready" }) : res.status(503).json({ status: "not_ready" }));
+  app.use("/mcp", fixedWindowRateLimit(cfg.http.rateLimitPerMinute));
+  app.use("/mcp", httpSecurity(cfg.http.allowedOrigins, cfg.http.bearerToken!));
+  app.use("/mcp", express.json({ limit: cfg.http.jsonLimitBytes, strict: true, type: ["application/json", "application/*+json"] }));
+  app.post("/mcp", async (req, res) => { const mcp = createMcpServer(); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => { void transport.close(); void mcp.close(); });
+    try { await mcp.connect(transport); await transport.handleRequest(req, res, req.body); }
+    catch (error) { console.error("[mcp] request failed:", error); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null }); }
+  });
+  app.all("/mcp", (_req, res) => res.status(405).json({ error: "method_not_allowed" }));
+  app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => { console.error("[http] rejected request:", error); res.status(400).json({ error: "invalid_request" }); });
+  httpServer = app.listen(cfg.http.port, cfg.http.host, () => console.error(`[mcp] Streamable HTTP listening on http://${cfg.http.host}:${cfg.http.port}/mcp`));
 }
-
-main().catch((e) => {
-  console.error("Fatal:", e);
-  process.exit(1);
-});
+main().catch(error => { console.error("Fatal:", error instanceof Error ? error.message : "Startup failed"); client.destroy(); process.exitCode = 1; });
