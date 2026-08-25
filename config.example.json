@@ -1,4 +1,4 @@
-{
+﻿{
   "elevenlabs": {
     "voiceId": "",
     "modelId": "eleven_turbo_v2_5",
@@ -7,7 +7,23 @@
     "style": 0.0,
     "useSpeakerBoost": true
   },
-  "defaults": {
-    "guildId": ""
+  "defaults": { "guildId": "" },
+  "policy": {
+    "allowedGuildIds": ["123456789012345678"],
+    "allowedChannelIds": ["234567890123456789"],
+    "allowedDmUserIds": [],
+    "allowLocalFiles": false,
+    "allowedLocalRoots": []
+  },
+  "limits": {
+    "messageChars": 2000,
+    "ttsChars": 2000,
+    "attachmentBytes": 8388608,
+    "attachmentTimeoutMs": 15000,
+    "elevenLabsTimeoutMs": 30000,
+    "ffmpegTimeoutMs": 30000,
+    "voiceConcurrency": 2,
+    "typingDelayMinMs": 0,
+    "typingDelayMaxMs": 0
   }
 }

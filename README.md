@@ -1,99 +1,51 @@
-<div align="center">
+# discord-claude-full-mcp
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:8B5CF6,100:22D3EE&height=170&section=header&text=discord-claude-full-mcp&fontColor=ffffff&fontSize=28&fontAlignY=40&desc=A%20full-featured%20Discord%20MCP%20server%20for%20Claude&descSize=17&descAlignY=64" width="100%" />
-
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](#)
-[![MCP](https://img.shields.io/badge/MCP-server-8B5CF6?style=for-the-badge)](https://modelcontextprotocol.io)
-[![license MIT](https://img.shields.io/badge/license-MIT-A855F7?style=for-the-badge)](LICENSE)
-
-</div>
-
-A full-featured Discord MCP server for Claude (and any MCP-compatible client). Send and read messages, post images and files, drop server stickers, react with custom server emojis, set the bot's presence — and optionally send **real Discord voice notes** synthesised on the fly with ElevenLabs.
-
-> **Heads up:** built and tested on **Windows**. It should work on Mac/Linux since it's plain Node.js + bundled `ffmpeg-static`, but I haven't verified those platforms. PRs welcome.
+A security-conscious Discord MCP server for Claude and other MCP clients. It can read and send messages, files, stickers, reactions, DMs, and optional ElevenLabs-generated Discord voice messages.
 
 ## Features
 
-- `send_message` — text, with `:emoji_name:` shortcuts that resolve to your server's custom emojis, and optional reply-to
-- `send_direct_message` — send a DM to any Discord user by user ID
-- `read_messages` — full message metadata (attachments, embeds, stickers, reactions, replies)
-- `edit_message`, `delete_message`, `react_to_message`, `set_typing`
-- `send_image`, `send_file` — local path or URL
-- `send_sticker` — server stickers by ID
-- `list_servers`, `list_channels`, `list_emojis`, `list_stickers`
-- `set_status` — online/idle/dnd/invisible plus activity text
-- `send_voice_note` *(optional)* — text → ElevenLabs TTS → real Discord voice message with proper waveform bars
+- Send, read, edit, delete, reply to, and react to messages
+- Send images/files from validated URLs; optional restricted local files in stdio mode
+- List allowed servers, channels, emojis, and stickers; send stickers and set presence
+- Send Direct Messages to explicitly allowed recipients
+- **Send Voice Messages** using ElevenLabs TTS and bounded ffmpeg processing
+- stdio and authenticated Streamable HTTP transports
 
-If you don't configure ElevenLabs, `send_voice_note` is simply not advertised — every other tool keeps working.
+## Requirements and install
 
-## Requirements
-
-- Node.js 18+
-- A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
-- *(Optional)* ElevenLabs API key + voice ID for voice notes
-
-### Bot permissions
-
-Invite the bot with at least:
-
-- Read Messages / View Channels
-- Send Messages
-- Read Message History
-- Add Reactions
-- Use External Emojis (helpful)
-- Attach Files
-- Manage Messages (only if you want delete on others' messages — usually not)
-
-You'll also need the **Message Content** privileged intent enabled in the developer portal if you want `read_messages` to return text content for non-bot messages.
-
-## Install
+- Node.js 20 or newer
+- Discord bot token, with only the permissions needed for enabled tools
+- Message Content privileged intent if reading other users' message text
+- Optional ElevenLabs API key and voice ID
 
 ```bash
 git clone <your-fork>
 cd discord-claude-full-mcp
 npm install
 npm run build
-```
-
-## Configure
-
-Copy the examples:
-
-```bash
 cp .env.example .env
 cp config.example.json config.json
 ```
 
-Fill in `.env`:
+## Exact configuration
 
-```
-DISCORD_TOKEN=...
-ELEVENLABS_API_KEY=          # leave blank to disable voice notes
-```
+`.env` contains secrets and process/network settings. `config.json` contains Discord policy and limits. Both are loaded from the project root; `MCP_CONFIG_PATH` can override the config path.
 
-Edit `config.json` only if you want voice notes or default-server behaviour:
+Required: `DISCORD_TOKEN`. Voice messages additionally require both `ELEVENLABS_API_KEY` and `elevenlabs.voiceId`.
 
-```json
-{
-  "elevenlabs": {
-    "voiceId": "your_voice_id_here",
-    "modelId": "eleven_turbo_v2_5",
-    "stability": 0.5,
-    "similarityBoost": 0.75,
-    "style": 0.0,
-    "useSpeakerBoost": true
-  },
-  "defaults": {
-    "guildId": "optional_default_server_id"
-  }
-}
-```
+Policy fields:
 
-`defaults.guildId` is what the server uses if a tool call omits the `server` argument and the bot is in more than one server.
+- `allowedGuildIds`: permitted Discord guild IDs. Empty means all guilds only in local stdio mode.
+- `allowedChannelIds`: optional channel restriction. A direct channel ID is still checked against both channel and guild policy.
+- `allowedDmUserIds`: exact DM recipient IDs; empty disables DMs.
+- `allowLocalFiles`: defaults false. Local paths are always rejected in HTTP mode.
+- `allowedLocalRoots`: required when local files are enabled. Real paths are checked after symlink resolution.
 
-## Use with Claude Desktop
+Limits are shown with defaults in `config.example.json`. Messages and TTS text are bounded, mentions are suppressed by default, replies fail if the referenced message is absent, network work has timeouts/byte limits, and voice work has a concurrency cap. Typing delay defaults off; set min/max milliseconds to enable it.
 
-Add to `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
+For the safest setup, copy `config.example.json` and replace every placeholder snowflake. HTTP mode refuses to start without a non-empty target allowlist and a bearer token of at least 24 characters.
+
+## stdio (Claude Desktop/Code)
 
 ```json
 {
@@ -106,63 +58,42 @@ Add to `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_c
 }
 ```
 
-## Use with Claude Code
+The server does not call the Claude API. Claude Desktop/Code supplies the model and invokes MCP tools separately; this project only connects MCP requests to Discord (and ElevenLabs when configured).
 
-```bash
-claude mcp add discord node C:\\path\\to\\discord-claude-full-mcp\\build\\index.js
-```
+## Streamable HTTP
 
-## Use from any MCP client
+Set:
 
-It's stdio-transport — point any MCP-compatible host at `node build/index.js`.
-
-## Use with claude.ai (browser & mobile app)
-
-The server supports **Streamable HTTP transport** for use directly in claude.ai — both browser and the Claude mobile app.
-
-1. Set transport mode in `.env`:
-
-```
-MCP_TRANSPORT=sse
+```dotenv
+MCP_TRANSPORT=streamable-http
+MCP_HOST=127.0.0.1
 MCP_PORT=3001
+MCP_HTTP_BEARER_TOKEN=<strong-random-secret>
+MCP_ALLOWED_ORIGINS=https://claude.ai
+MCP_RATE_LIMIT_PER_MINUTE=60
 ```
 
-2. Run the server:
+`http` is equivalent; `sse` is a deprecated compatibility alias. The default loopback bind is intentional. `/mcp` requires `Authorization: Bearer ...`; browser Origins must exactly match `MCP_ALLOWED_ORIGINS`. CORS is never wildcard. A global application-level rate limit defaults to 60 requests per minute. `/health` reports only process liveness and `/ready` reports Discord readiness.
+
+Do not directly publish this process or use an unauthenticated tunnel. Put it behind TLS and an authenticated reverse proxy that preserves the Authorization header, enforces request/rate limits, and restricts source access. A static bearer token is not OAuth: MCP hosts/connectors that require OAuth discovery and authorization will need an OAuth-capable gateway rather than this server alone.
+
+## Attachment safety
+
+URL attachments permit only HTTP(S), resolve DNS before each request, reject private/loopback/link-local/multicast/metadata address ranges, manually revalidate redirects, and enforce timeout and byte limits. DNS rebinding protection is best-effort with platform `fetch`; a hardened egress proxy/firewall is recommended for high-assurance remote deployments.
+
+Local files are explicit opt-in, async, size-bounded, and constrained to real paths below configured roots. They are unavailable over Streamable HTTP regardless of configuration.
+
+## Voice messages
+
+ElevenLabs output is downloaded with timeout and size bounds. Two ffmpeg processes create OGG/Opus audio and waveform PCM; each has a timeout, and `voiceConcurrency` limits simultaneous jobs. `send_voice_note` is hidden when ElevenLabs is not fully configured.
+
+## Development
 
 ```bash
-npm run build && node build/index.js
+npm test
 ```
 
-3. Expose it publicly (e.g. via ngrok):
-
-```bash
-ngrok http 3001
-```
-
-ngrok will display a public URL like `https://abc123.ngrok-free.dev` — copy it.
-
-4. Add to claude.ai: **Settings → Connectors → Add custom connector**
-   - URL: your ngrok URL + `/mcp` → e.g. `https://abc123.ngrok-free.dev/mcp`
-   - **Important:** don't forget the `/mcp` at the end!
-
-The server runs in stateless mode — each request gets its own server instance. A health check is available at `/health`.
-
-## How voice notes work
-
-1. Tool receives text.
-2. ElevenLabs renders MP3.
-3. `ffmpeg-static` (bundled) transcodes MP3 → OGG/Opus mono and produces an analysis-grade PCM stream.
-4. Server samples 256 amplitude peaks from the PCM, normalises them to 0–255, base64-encodes the byte array — that's the waveform Discord renders as bars.
-5. POST to Discord with `IS_VOICE_MESSAGE` flag and per-attachment `duration_secs` + `waveform`.
-
-Result: a Discord voice message indistinguishable from a real recording, with accurate-looking bars.
-
-## Notes & limitations
-
-- Built and tested on Windows only.
-- The voice-note pipeline runs `ffmpeg` twice (transcode + amplitude analysis) — this is in-memory and fast, but for very long texts you'll feel it.
-- `send_voice_note` is hidden from the tool list when ElevenLabs is not configured. There's no half-broken state.
-- This server does **not** implement: voice channel join/speak, slash command registration, role/permission management. Those are out of scope.
+CI runs build and Node's built-in tests on Node 20 and 22.
 
 ## License
 
